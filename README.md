@@ -1,2 +1,3 @@
 # LOC-TALK
-Local chat app for adnroid phones
+Local chat app that im curently working on.
+If you wanna try it its located here: http://158.101.167.252/
