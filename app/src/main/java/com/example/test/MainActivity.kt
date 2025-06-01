@@ -1,9 +1,9 @@
 package com.example.test
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.CountDownTimer
 import android.text.method.ScrollingMovementMethod
 import android.util.Log
 import android.widget.Button
@@ -11,28 +11,55 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.test.ui.theme.TESTTheme
-import kotlinx.coroutines.*
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.GroundOverlay
+import com.google.maps.android.compose.GroundOverlayPosition
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okio.IOException
 import org.json.JSONArray
 import java.net.ConnectException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.exp
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 
 class MainActivity : ComponentActivity() {
+
     val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -48,6 +75,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    val messages_fetching_tick_duration: Duration = 2000.milliseconds
     val server_ip = "158.101.167.252"
     private val OkHttpclient = OkHttpClient()
     var last_lat : String = "0.0"
@@ -60,10 +88,20 @@ class MainActivity : ComponentActivity() {
     var e_wrong_location_response = "Try to install the newest version of the app! And stay in the zone: Czechia."
     var e_message_too_long_response = "Your message was too long!"
     var e_server_not_reachable = "Server not reachable! Check internet connection!"
+    val e_map_request_fail = "Map fetching error:"
+    val e_map_needs_gps = "You need gps to look at the activity map"
+
+    private val activityJob = SupervisorJob()
+    private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
+
+    var screen_on_map = false
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+
+
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
@@ -73,6 +111,8 @@ class MainActivity : ComponentActivity() {
         val sendButton: Button = findViewById(R.id.send_button)
         val messageTextWindow : EditText = findViewById(R.id.message_text)
         val timeTextView : TextView = findViewById(R.id.textView_time)
+        val composeButton: Button = findViewById(R.id.compose_button)
+
 
 
         locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
@@ -94,6 +134,7 @@ class MainActivity : ComponentActivity() {
         else{
             locationTextView.text = "Waiting for location!"
         }
+
 
 
         sendButton.setOnClickListener {
@@ -122,8 +163,8 @@ class MainActivity : ComponentActivity() {
             last_lon = longitude
         }
 
-        val timer = object: CountDownTimer(1000*60*60*2, 2000) {
-            override fun onTick(millisUntilFinished: Long) {
+        val chat_activity = activityScope.launch {
+            while (isActive) {
                 if (last_lat != "0.0" && last_lon != "0.0") {
                     requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
                 }
@@ -131,12 +172,104 @@ class MainActivity : ComponentActivity() {
                     locationTextView.text = e_no_location
                 }
                 timeTextView.text = convertUnixTimestampToHHmm(System.currentTimeMillis())
-            }
-            override fun onFinish() {
-                // do something
+
+                delay(messages_fetching_tick_duration)
             }
         }
-        timer.start()
+
+
+        composeButton.setOnClickListener {
+            if (last_lat != "0.0" && last_lon != "0.0")
+            {
+                screen_on_map = true
+                chat_activity.cancel()
+                // Switch from View-based UI to Compose-based UI
+                setContent {
+                    TESTTheme {
+                        val activity = LocalContext.current as? Activity
+                        Column {
+                            Spacer(modifier = Modifier.height(50.dp))
+                            Button(onClick = {
+                                screen_on_map = false
+                                // Return to original activity UI
+                                activity?.recreate() // restarts activity with the original layout and that causes issues
+                                //activity?.setContentView(R.layout.activity_main)
+                            }) {
+                                Text("Back to chat")
+                            }
+                            val location = remember { mutableStateOf(LatLng(last_lat.toDouble(), last_lon.toDouble())) }
+
+                            val cameraPositionState = rememberCameraPositionState {
+                                position = CameraPosition.fromLatLngZoom(location.value, 15f)
+                            }
+                            val activityMap = remember { mutableStateOf(emptyArray<Array<Double>>()) }
+                            var good_result = remember {mutableStateOf(false)}
+
+
+
+                            LaunchedEffect(screen_on_map) {
+                                while (screen_on_map) {
+                                    requestMap(arrayOf(last_lat, last_lon)) { result ->
+                                        if (result.startsWith("ERROR")) {
+                                            Toast.makeText(this@MainActivity, "$e_map_request_fail$result", Toast.LENGTH_LONG).show()
+                                            good_result.value = false
+                                        } else {
+                                            good_result.value = true
+                                            activityMap.value = parseJsonTo2DDoubleArray(result)
+                                        }
+                                    }
+                                    delay(30_000) // 30 seconds
+                                }
+                            }
+
+
+                            GoogleMap(
+                                modifier = Modifier.fillMaxSize(),
+                                cameraPositionState = cameraPositionState
+                            ) {
+                                Marker(
+                                    state = MarkerState(position = location.value),
+                                    title = "Your location",
+                                    snippet = "This is where you are"
+                                )
+
+
+
+                                if (good_result.value) {
+                                    for (info in activityMap.value) {
+                                        val latLng = LatLng(info[0], info[1])
+                                        val transparency = (0.9*(exp(-0.3*info[2]))).toFloat()
+
+                                        GroundOverlay(
+                                            position = GroundOverlayPosition.create(
+                                                latLng,
+                                                100f, // width in meters
+                                                100f  // height in meters
+                                            ),
+                                            image = BitmapDescriptorFactory.fromResource(R.drawable.blue_square),
+                                            transparency = transparency, // 0 = opaque, 1 = invisible
+                                            zIndex = 1f
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Toast.makeText(this@MainActivity, e_map_needs_gps, Toast.LENGTH_LONG).show()
+            }
+        }
+
+
+
+
+    }
+    override fun onDestroy() {
+        super.onDestroy()
+        activityJob.cancel()
     }
 
 
@@ -163,6 +296,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun request_map_raw(location: Array<String> ): String {
+
+        val request = Request.Builder()
+            .url("http://${server_ip}:5000/map?lat=${location[0]}&lon=${location[1]}")
+            .method("GET", null)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .build()
+
+        try {
+            OkHttpClient().newCall(request).execute().use { response ->
+                return check_for_error(response)
+            }
+
+        } catch (e: ConnectException) {
+            Log.e("request_map_tag", "Connection failed: ${e.message}")
+            return "ERROR: ${e_server_not_reachable} \n ${e.message}"
+        } catch (e: Exception) {
+            Log.e("request_mag_tag", "An error occurred: ${e.message}")
+            return "ERROR: ${e.message}"
+        }
+    }
+
     private suspend fun request_messages_in_diferent_thread(location: Array<String>): String {
         // This runs on a background thread (IO dispatcher)
         return withContext(Dispatchers.IO) {
@@ -177,8 +332,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    private suspend fun request_map_in_diferent_thread(location: Array<String>): String {
+        // This runs on a background thread (IO dispatcher)
+        return withContext(Dispatchers.IO) {
+            // Simulate network request here (replace with actual network code)
+            // For example, using OkHttp, HttpURLConnection, etc.
+            try {
+                request_map_raw(location)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                "Network request failed"
+            }
+        }
+    }
+
+
+    private fun requestMap(location: Array<String>, onResult: (String) -> Unit) {
+        activityScope.launch {
+            try {
+                val result = request_map_in_diferent_thread(location)
+                onResult(result)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onResult("ERROR: ${e.message}")
+            }
+        }
+    }
+
     private fun requestMessages_and_updatewiew(location: Array<String>){
-        CoroutineScope(Dispatchers.Main).launch {
+        activityScope.launch {
             try {
                 // Call the suspend function and wait for its result
                 var result = request_messages_in_diferent_thread(location)
@@ -227,7 +410,7 @@ class MainActivity : ComponentActivity() {
 
 
     private fun send_message_and_updatewiew(message: String , location: Array<String> ,time: Long){
-        CoroutineScope(Dispatchers.Main).launch {
+        activityScope.launch {
             try {
                 // Call the suspend function and wait for its result
                 var result = send_message_in_diferent_thread(message=message, location = location, time=time)
@@ -252,7 +435,8 @@ class MainActivity : ComponentActivity() {
 
 
 
-    private suspend fun send_message_in_diferent_thread(message: String , location: Array<String> ,time: Long): String{
+    private suspend fun send_message_in_diferent_thread(message: String , location: Array<String> ,time: Long): String
+    {
         // This runs on a background thread (IO dispatcher)
         return withContext(Dispatchers.IO) {
             // Simulate network request here (replace with actual network code)
@@ -338,20 +522,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    TESTTheme {
-        Greeting("Android")
+fun parseJsonTo2DDoubleArray(json: String): Array<Array<Double>> {
+    val outerArray = JSONArray(json)
+    return Array(outerArray.length()) { i ->
+        val innerArray = outerArray.getJSONArray(i)
+        Array(3) { j ->
+            innerArray.getDouble(j)
+        }
     }
 }
+
+
 
 
