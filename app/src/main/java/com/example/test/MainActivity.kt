@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
         locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
         locationTextView.setTextIsSelectable(true)
 
+
         locationPermissionRequest.launch(arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -365,13 +366,19 @@ class MainActivity : ComponentActivity() {
             try {
                 // Call the suspend function and wait for its result
                 var result = request_messages_in_diferent_thread(location)
+                val locationTextView: TextView = findViewById(R.id.messagesTextView)
+                locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
+                locationTextView.setTextIsSelectable(true)
+
+                val scrollY = locationTextView.scrollY
                 if (result.startsWith("ERROR")){
-                    val locationTextView: TextView = findViewById(R.id.messagesTextView)
                     locationTextView.text = e_message_request + result
                 }
                 else{
-                    val locationTextView: TextView = findViewById(R.id.messagesTextView)
                     locationTextView.text = get_response_to_text(result)
+                    locationTextView.post {
+                        locationTextView.scrollTo(0, scrollY)
+                    }
                 }
 
             } catch (e: Exception) {
@@ -417,6 +424,8 @@ class MainActivity : ComponentActivity() {
 
                 if (result.startsWith("ERROR")){
                     val locationTextView: TextView = findViewById(R.id.messagesTextView)
+                    locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
+                    locationTextView.setTextIsSelectable(true)
                     locationTextView.text = e_message_post +  result
                     Toast.makeText(this@MainActivity, e_message_post, Toast.LENGTH_SHORT).show()
                 }
@@ -482,7 +491,8 @@ class MainActivity : ComponentActivity() {
 
     fun convertUnixTimestampToHHmm(timestamp: Long): String {
         val date = Date(timestamp)
-        val format = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val format = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+
         return format.format(date)
     }
 
