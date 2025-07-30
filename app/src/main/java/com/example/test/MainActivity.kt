@@ -4,8 +4,12 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.method.ScrollingMovementMethod
 import android.util.Log
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -13,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -20,17 +25,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.test.ui.theme.TESTTheme
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.Circle
 import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.GroundOverlay
 import com.google.maps.android.compose.GroundOverlayPosition
@@ -54,6 +66,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.pow
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -90,6 +104,8 @@ class MainActivity : ComponentActivity() {
     var e_server_not_reachable = "Server not reachable! Check internet connection!"
     val e_map_request_fail = "Map fetching error:"
     val e_map_needs_gps = "You need gps to look at the activity map"
+    val e_location_permisions = "Enable location permissions"
+
 
     private val activityJob = SupervisorJob()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
@@ -106,7 +122,7 @@ class MainActivity : ComponentActivity() {
         setContentView(R.layout.activity_main)
 
 
-        val locationHelper = Location(this)
+
         val locationTextView: TextView = findViewById(R.id.messagesTextView)
         val sendButton: Button = findViewById(R.id.send_button)
         val messageTextWindow : EditText = findViewById(R.id.message_text)
@@ -118,7 +134,7 @@ class MainActivity : ComponentActivity() {
         locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
         locationTextView.setTextIsSelectable(true)
 
-
+        val locationHelper = Location(this)
         locationPermissionRequest.launch(arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -152,17 +168,55 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
+            if (last_lat == "0.0" || last_lon == "0.0"){
+                val text = "Wait for the gps location to load"
+                Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
 
             send_message_and_updatewiew(message, arrayOf(last_lat, last_lon), time)
             messageTextWindow.text.clear()
         }
 
-        locationHelper.getCurrentLocation{ latitude, longitude ->
-            //locationTextView.text = "${latitude}, ${longitude}"
-            //requestMessages_and_updatewiew(arrayOf(latitude,longitude))//server request only when we get new location
-            last_lat = latitude
-            last_lon = longitude
+
+        val handler = Handler(Looper.getMainLooper()) // ✅ OK to declare here
+
+        val permissionCheckRunnable = object : Runnable {
+            override fun run() {
+                val hasPermission = ActivityCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+
+                if (hasPermission) {
+
+                    locationHelper.getCurrentLocation(
+                        onSuccess = { latitude, longitude ->
+                            last_lat = latitude
+                            last_lon = longitude
+                        },
+                        onFailure = { error ->
+                            Log.e("LocationError", error)
+                            locationTextView.text = error
+                            Toast.makeText(this@MainActivity, "Failed to get location: $error", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+
+                } else {
+                    // 🔁 Repeat check every 500ms
+                    handler.postDelayed(this, 500)
+                }
+            }
         }
+
+        // ✅ Start polling AFTER UI is ready
+        handler.post(permissionCheckRunnable)
+
+
+
+
+
+
 
         val chat_activity = activityScope.launch {
             while (isActive) {
@@ -170,7 +224,14 @@ class MainActivity : ComponentActivity() {
                     requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
                 }
                 else{
-                    locationTextView.text = e_no_location
+                    if(!locationTextView.text.contains(e_no_location))
+                    {
+                        locationTextView.text = buildString {
+                            append(locationTextView.text.toString())
+                            append(e_no_location)
+                        }
+                    }
+
                 }
                 timeTextView.text = convertUnixTimestampToHHmm(System.currentTimeMillis())
 
@@ -203,14 +264,30 @@ class MainActivity : ComponentActivity() {
                             val cameraPositionState = rememberCameraPositionState {
                                 position = CameraPosition.fromLatLngZoom(location.value, 15f)
                             }
+                            cameraPositionState.position = CameraPosition.fromLatLngZoom(location.value, 15f)
                             val activityMap = remember { mutableStateOf(emptyArray<Array<Double>>()) }
                             var good_result = remember {mutableStateOf(false)}
-
+                            val zoom = remember { mutableStateOf(0)}
 
 
                             LaunchedEffect(screen_on_map) {
                                 while (screen_on_map) {
-                                    requestMap(arrayOf(last_lat, last_lon)) { result ->
+                                    snapshotFlow { cameraPositionState.position }
+                                        .collect { position ->
+                                            val latLng = position.target
+                                            zoom.value = position.zoom.toInt()
+                                            requestMap(arrayOf(latLng.latitude.toString(), latLng.longitude.toString()),zoom.value) { result ->
+                                                if (result.startsWith("ERROR")) {
+                                                    Toast.makeText(this@MainActivity, "$e_map_request_fail$result", Toast.LENGTH_LONG).show()
+                                                    good_result.value = false
+                                                } else {
+                                                    good_result.value = true
+                                                    activityMap.value = parseJsonTo2DDoubleArray(result)
+                                                }
+                                            }
+                                            delay(1_000)
+                                        }
+                                    requestMap(arrayOf(last_lat, last_lon),zoom=16) { result ->
                                         if (result.startsWith("ERROR")) {
                                             Toast.makeText(this@MainActivity, "$e_map_request_fail$result", Toast.LENGTH_LONG).show()
                                             good_result.value = false
@@ -234,20 +311,40 @@ class MainActivity : ComponentActivity() {
                                     snippet = "This is where you are"
                                 )
 
-
+                                Circle(
+                                    center = location.value,
+                                    radius = 150.0, // in meters
+                                    strokeColor = Color.Blue,
+                                    strokeWidth = 2f,
+                                    fillColor = Color(0x220000FF), // semi-transparent fill
+                                    clickable = false
+                                )
 
                                 if (good_result.value) {
                                     for (info in activityMap.value) {
                                         val latLng = LatLng(info[0], info[1])
-                                        val transparency = (0.9*(exp(-0.3*info[2]))).toFloat()
+                                        val transparency = (0.9*(exp(-0.3*max(info[2],info[3])))).toFloat()
+                                        var drawable = R.drawable.blue_square
+                                        if (info[3] != 0.0)
+                                        {
+                                            if (info[2] != 0.0)
+                                            {
+                                                drawable = R.drawable.purple_square
+                                            }
+                                            else
+                                            {
+                                                drawable = R.drawable.red_square
+                                            }
+                                        }
 
                                         GroundOverlay(
                                             position = GroundOverlayPosition.create(
                                                 latLng,
-                                                100f, // width in meters
-                                                100f  // height in meters
+                                                info[4].toFloat(), // width in meters
+                                                info[4].toFloat()  // height in meters
                                             ),
-                                            image = BitmapDescriptorFactory.fromResource(R.drawable.blue_square),
+
+                                            image = BitmapDescriptorFactory.fromResource(drawable),
                                             transparency = transparency, // 0 = opaque, 1 = invisible
                                             zIndex = 1f
                                         )
@@ -297,10 +394,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun request_map_raw(location: Array<String> ): String {
+    private fun request_map_raw(location: Array<String> ,zoom: Int): String {
 
         val request = Request.Builder()
-            .url("http://${server_ip}:5000/map?lat=${location[0]}&lon=${location[1]}")
+            .url("http://${server_ip}:5000/map?lat=${location[0]}&lon=${location[1]}&zoom=${zoom-14}")
             .method("GET", null)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .build()
@@ -334,13 +431,13 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private suspend fun request_map_in_diferent_thread(location: Array<String>): String {
+    private suspend fun request_map_in_diferent_thread(location: Array<String>, zoom: Int): String {
         // This runs on a background thread (IO dispatcher)
         return withContext(Dispatchers.IO) {
             // Simulate network request here (replace with actual network code)
             // For example, using OkHttp, HttpURLConnection, etc.
             try {
-                request_map_raw(location)
+                request_map_raw(location,zoom)
             } catch (e: Exception) {
                 e.printStackTrace()
                 "Network request failed"
@@ -349,10 +446,10 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private fun requestMap(location: Array<String>, onResult: (String) -> Unit) {
+    private fun requestMap(location: Array<String>,zoom: Int, onResult: (String) -> Unit) {
         activityScope.launch {
             try {
-                val result = request_map_in_diferent_thread(location)
+                val result = request_map_in_diferent_thread(location,zoom)
                 onResult(result)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -530,6 +627,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+
+
 }
 
 
@@ -537,12 +637,8 @@ fun parseJsonTo2DDoubleArray(json: String): Array<Array<Double>> {
     val outerArray = JSONArray(json)
     return Array(outerArray.length()) { i ->
         val innerArray = outerArray.getJSONArray(i)
-        Array(3) { j ->
+        Array(5) { j ->
             innerArray.getDouble(j)
         }
     }
 }
-
-
-
-

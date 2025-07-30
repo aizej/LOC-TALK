@@ -25,18 +25,22 @@ class Location(private val context: Context) {
     ).build()
 
     @SuppressLint("MissingPermission")
-    fun getCurrentLocation(callback: (latitude: String, longitude: String) -> Unit) {
+    fun getCurrentLocation(onSuccess: (latitude: String, longitude: String) -> Unit,
+                           onFailure: (error: String) -> Unit) {
         // Check for location permissions
 
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
             && ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)
-            {
-            Log.e("permissions","nemame permise")
+        {
+            onFailure("Location permission not granted")
             // Permission is not granted, handle it in the activity
             return
         }
 
-
+        val timeoutHandler = android.os.Handler(Looper.getMainLooper())
+        val timeoutRunnable = Runnable {
+            onFailure("Location request timed out")
+        }
 
         fusedLocationClient.requestLocationUpdates(
             locationRequest,
@@ -45,7 +49,7 @@ class Location(private val context: Context) {
                     super.onLocationResult(locationResult)
                     val location: Location? = locationResult.lastLocation
                     if (location != null) {
-                        callback(location.latitude.toString(), location.longitude.toString())
+                        onSuccess(location.latitude.toString(), location.longitude.toString())
                         // Stop location updates after getting the location
                         //fusedLocationClient.removeLocationUpdates(this)
                     }
