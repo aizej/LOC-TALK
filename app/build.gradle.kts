@@ -9,11 +9,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.test"
-        minSdk = 31
-        targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        applicationId = "com.aizej.loctalk"
+        minSdk = 28
+        targetSdk = 35
+        versionCode = 8
+        versionName = "1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
