@@ -172,11 +172,12 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
+            """
             if (last_lat == "0.0" || last_lon == "0.0"){
                 val text = "Wait for the gps location to load"
                 Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
-            }
+            }"""
 
             send_message_and_updatewiew(message, arrayOf(last_lat, last_lon), time)
             messageTextWindow.text.clear()
@@ -224,6 +225,7 @@ class MainActivity : ComponentActivity() {
 
         val chat_activity = activityScope.launch {
             while (isActive) {
+                """
                 if (last_lat != "0.0" && last_lon != "0.0") {
                     requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
                 }
@@ -236,8 +238,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                }
-                timeTextView.text = convertUnixTimestampToHHmm(System.currentTimeMillis())
+                }"""
+
+                requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
+
+
+                var HH_MM_SS = convertUnixTimestampToHHmm(System.currentTimeMillis())
+
+                timeTextView.text = "$HH_MM_SS\n\r lon: $last_lon lat: $last_lat"
 
                 delay(messages_fetching_tick_duration)
             }
@@ -245,7 +253,7 @@ class MainActivity : ComponentActivity() {
 
 
         composeButton.setOnClickListener {
-            if (last_lat != "0.0" && last_lon != "0.0")
+            if (true) //(last_lat != "0.0" && last_lon != "0.0")
             {
                 screen_on_map = true
                 chat_activity.cancel()
