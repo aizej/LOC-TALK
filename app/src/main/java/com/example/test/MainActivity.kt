@@ -20,9 +20,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -105,6 +107,8 @@ class MainActivity : ComponentActivity() {
     val e_map_request_fail = "Map fetching error:"
     val e_map_needs_gps = "You need gps to look at the activity map"
     val e_location_permisions = "Enable location permissions"
+
+    val e_report_post = "Could not send report due to an Error: "
 
 
     private val activityJob = SupervisorJob()
@@ -251,14 +255,27 @@ class MainActivity : ComponentActivity() {
                         val activity = LocalContext.current as? Activity
                         Column {
                             Spacer(modifier = Modifier.height(50.dp))
-                            Button(onClick = {
-                                screen_on_map = false
-                                // Return to original activity UI
-                                activity?.recreate() // restarts activity with the original layout and that causes issues
-                                //activity?.setContentView(R.layout.activity_main)
-                            }) {
-                                Text("Back to chat")
+                            Row() {
+                                Button(onClick = {
+                                    screen_on_map = false
+                                    // Return to original activity UI
+                                    activity?.recreate() // restarts activity with the original layout and that causes issues
+                                    //activity?.setContentView(R.layout.activity_main)
+                                }) {
+                                    Text("Back to chat")
+                                }
+                                Spacer(modifier = Modifier.width(30.dp))
+                                Button(onClick = {
+                                    var cur_time =  System.currentTimeMillis()/1000
+                                    var report = "Report at lat:$last_lat lon:$last_lon timestamp: $cur_time"
+                                    send_report_and_updatewiew(report = report)
+                                }){
+                                    Text("Report messages")
+                                }
                             }
+
+
+
                             val location = remember { mutableStateOf(LatLng(last_lat.toDouble(), last_lon.toDouble())) }
 
                             val cameraPositionState = rememberCameraPositionState {
@@ -585,6 +602,74 @@ class MainActivity : ComponentActivity() {
         return "ERROR: ${e.message}"
         }
     }
+
+    private fun send_report_and_updatewiew(report: String){
+        activityScope.launch {
+            try {
+                // Call the suspend function and wait for its result
+                var result = send_report_in_diferent_thread(report=report)
+
+                if (result.startsWith("ERROR")){
+                    Toast.makeText(this@MainActivity, e_report_post, Toast.LENGTH_LONG).show()
+                }
+                else{
+                    val text = "Report sent!"
+                    Toast.makeText(this@MainActivity, text, Toast.LENGTH_LONG).show()
+                }
+
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // Handle any errors, e.g., show a message to the user
+            }
+        }
+    }
+
+
+
+    private suspend fun send_report_in_diferent_thread(report: String): String
+    {
+        // This runs on a background thread (IO dispatcher)
+        return withContext(Dispatchers.IO) {
+            // Simulate network request here (replace with actual network code)
+            // For example, using OkHttp, HttpURLConnection, etc.
+            try {
+                send_report_raw(report=report)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                "ERROR Network request failed"
+            }
+        }
+    }
+
+    private fun send_report_raw(report: String): String{
+
+
+        val formBody = FormBody.Builder()
+            .add("recommendation", report)
+            .build()
+
+        val request = Request.Builder()
+            .url("http://158.101.167.252/save_recommendation.php")
+            .post(formBody)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .build()
+
+        try {
+            OkHttpclient.newCall(request).execute().use { response ->
+                return check_for_error(response)
+            }
+        } catch (e: ConnectException) {
+            Log.e("request_tag", "Connection failed: ${e.message}")
+            return "ERROR: ${e_server_not_reachable}\n${e.message}"
+        } catch (e: Exception) {
+            Log.e("request_tag", "An error occurred: ${e.message}")
+            return "ERROR: ${e.message}"
+        }
+    }
+
+
+
 
     fun convertUnixTimestampToHHmm(timestamp: Long): String {
         val date = Date(timestamp)
