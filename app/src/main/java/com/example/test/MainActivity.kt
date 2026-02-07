@@ -8,8 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.method.ScrollingMovementMethod
 import android.util.Log
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.view.MotionEvent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -17,7 +16,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,13 +33,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.test.ui.theme.TESTTheme
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.Circle
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.GoogleMap
@@ -69,7 +64,6 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.exp
 import kotlin.math.max
-import kotlin.math.pow
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -127,16 +121,32 @@ class MainActivity : ComponentActivity() {
 
 
 
-        val locationTextView: TextView = findViewById(R.id.messagesTextView)
+        val messages_TextView: TextView = findViewById(R.id.messagesTextView)
         val sendButton: Button = findViewById(R.id.send_button)
-        val messageTextWindow : EditText = findViewById(R.id.message_text)
+        val date_and_location_TextView : EditText = findViewById(R.id.message_text)
         val timeTextView : TextView = findViewById(R.id.textView_time)
         val composeButton: Button = findViewById(R.id.compose_button)
 
 
 
-        locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
-        locationTextView.setTextIsSelectable(true)
+        //messages_TextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
+        messages_TextView.setTextIsSelectable(true)
+        var userSelecting = false
+
+        messages_TextView.setOnLongClickListener {
+            userSelecting = true
+            false // IMPORTANT: let TextView handle selection
+        }
+        messages_TextView.setOnClickListener {
+            userSelecting = false
+        }
+
+
+
+
+
+
+
 
         val locationHelper = Location(this)
         locationPermissionRequest.launch(arrayOf(
@@ -150,16 +160,16 @@ class MainActivity : ComponentActivity() {
 
 
         if (hasLocationPermissions == false){
-            locationTextView.text = "No location permisions!"
+            messages_TextView.text = "No location permisions!"
         }
         else{
-            locationTextView.text = "Waiting for location!"
+            messages_TextView.text = "Waiting for location!"
         }
 
 
 
         sendButton.setOnClickListener {
-            val message = messageTextWindow.text.toString().replace("\n", "")
+            val message = date_and_location_TextView.text.toString().replace("\n", "")
             val time = (System.currentTimeMillis()).toLong()
 
             if (message.length > 250) {
@@ -180,7 +190,7 @@ class MainActivity : ComponentActivity() {
             }"""
 
             send_message_and_updatewiew(message, arrayOf(last_lat, last_lon), time)
-            messageTextWindow.text.clear()
+            date_and_location_TextView.text.clear()
         }
 
 
@@ -202,7 +212,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onFailure = { error ->
                             Log.e("LocationError", error)
-                            locationTextView.text = error
+                            messages_TextView.text = error
                             Toast.makeText(this@MainActivity, "Failed to get location: $error", Toast.LENGTH_SHORT).show()
                         }
                     )
@@ -230,18 +240,18 @@ class MainActivity : ComponentActivity() {
                     requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
                 }
                 else{
-                    if(!locationTextView.text.contains(e_no_location))
+                    if(!messages_TextView.text.contains(e_no_location))
                     {
-                        locationTextView.text = buildString {
-                            append(locationTextView.text.toString())
+                        messages_TextView.text = buildString {
+                            append(messages_TextView.text.toString())
                             append(e_no_location)
                         }
                     }
 
                 }"""
-
-                requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
-
+                if (!userSelecting) {
+                    requestMessages_and_updatewiew(arrayOf(last_lat, last_lon))
+                }
 
                 var HH_MM_SS = convertUnixTimestampToHHmm(System.currentTimeMillis())
 
@@ -488,18 +498,19 @@ class MainActivity : ComponentActivity() {
             try {
                 // Call the suspend function and wait for its result
                 var result = request_messages_in_diferent_thread(location)
-                val locationTextView: TextView = findViewById(R.id.messagesTextView)
-                locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
-                locationTextView.setTextIsSelectable(true)
+                val messages_TextView: TextView = findViewById(R.id.messagesTextView)
 
-                val scrollY = locationTextView.scrollY
+
+                val scrollY = messages_TextView.scrollY
                 if (result.startsWith("ERROR")){
-                    locationTextView.text = e_message_request + result
+                    messages_TextView.text = e_message_request + result
                 }
                 else{
-                    locationTextView.text = get_response_to_text(result)
-                    locationTextView.post {
-                        locationTextView.scrollTo(0, scrollY)
+
+                    messages_TextView.text = get_response_to_text(result)
+
+                    messages_TextView.post {
+                        messages_TextView.scrollTo(0, scrollY)
                     }
                 }
 
@@ -545,10 +556,10 @@ class MainActivity : ComponentActivity() {
                 var result = send_message_in_diferent_thread(message=message, location = location, time=time)
 
                 if (result.startsWith("ERROR")){
-                    val locationTextView: TextView = findViewById(R.id.messagesTextView)
-                    locationTextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
-                    locationTextView.setTextIsSelectable(true)
-                    locationTextView.text = e_message_post +  result
+                    val messages_TextView: TextView = findViewById(R.id.messagesTextView)
+                    messages_TextView.movementMethod = ScrollingMovementMethod() // for some reason this disables copying
+                    messages_TextView.setTextIsSelectable(true)
+                    messages_TextView.text = e_message_post +  result
                     Toast.makeText(this@MainActivity, e_message_post, Toast.LENGTH_SHORT).show()
                 }
                 else{

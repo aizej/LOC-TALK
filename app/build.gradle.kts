@@ -12,8 +12,8 @@ android {
         applicationId = "com.aizej.loctalk"
         minSdk = 28
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.10"
+        versionCode = 12
+        versionName = "1.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
